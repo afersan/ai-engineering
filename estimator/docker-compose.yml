@@ -2,15 +2,27 @@
 # For production, remove the bind mount and the --reload flag.
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: estimator-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   estimator:
     build: .
     container_name: estimator
     ports:
       - "8000:8000"
+    depends_on:
+      - redis
 
     # Load environment variables (API keys, config) from the local .env file.
     env_file:
       - .env
+
+    environment:
+      REDIS_URL: redis://redis:6379/0
 
     # Bind-mount the app/ directory so code changes are reflected immediately
     # inside the container without rebuilding the image.
