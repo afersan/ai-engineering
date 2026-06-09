@@ -1,8 +1,11 @@
+from collections.abc import AsyncIterable
+
 import structlog
 from fastapi import APIRouter, HTTPException
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from app.schemas.estimation import EstimationRequest, EstimationResponse
-from app.services.llm_service import LLMServiceError, generate_estimation
+from app.schemas.estimation import EstimationRequest, EstimationResponse, StreamMeta, TokenUsage
+from app.services.llm_service import LLMServiceError, generate_estimation, stream_estimation
 
 log = structlog.get_logger()
 
@@ -19,3 +22,30 @@ async def create_estimation(request: EstimationRequest) -> EstimationResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
     return EstimationResponse(**result)
+
+
+@router.post("/estimate/stream", response_class=EventSourceResponse)
+async def create_estimation_stream(
+    request: EstimationRequest,
+) -> AsyncIterable[ServerSentEvent]:
+    """Stream estimation tokens via Server-Sent Events."""
+    try:
+        chunk_iter, meta_holder = stream_estimation(request.transcription)
+    except LLMServiceError as exc:
+        log.error("estimation_stream_error", error=str(exc))
+        yield ServerSentEvent(event="error", data=str(exc))
+        return
+
+    for chunk in chunk_iter:
+        yield ServerSentEvent(data=chunk)
+
+    if meta_holder:
+        meta = StreamMeta(
+            model=meta_holder.get("model", ""),
+            provider=meta_holder.get("provider", ""),
+            usage=TokenUsage(**meta_holder.get("usage", {})),
+            cache_hit=meta_holder.get("cache_hit", False),
+            latency_ms=meta_holder.get("latency_ms"),
+            fallback_used=meta_holder.get("fallback_used", False),
+        )
+        yield ServerSentEvent(event="meta", data=meta.model_dump_json())

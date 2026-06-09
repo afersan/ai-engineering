@@ -1,8 +1,11 @@
 import structlog
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import Response
 
 from app.config import get_settings
 from app.routers import estimations
@@ -33,6 +36,23 @@ def configure_logging() -> None:
     )
 
 
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """Bind a unique request_id to structlog context for every HTTP request."""
+
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=request_id,
+            endpoint=request.url.path,
+        )
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
@@ -47,12 +67,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Software Estimation CAG Service",
     description="AI-powered software estimation service using Cache Augmented Generation architecture",
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
 )
 
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -70,6 +91,6 @@ async def health_check() -> dict:
     settings = get_settings()
     return {
         "status": "healthy",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "environment": settings.APP_ENV,
     }

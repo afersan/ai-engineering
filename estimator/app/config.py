@@ -14,8 +14,15 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = None
     LLM_PROVIDER: Literal["openai", "anthropic"] = "openai"
     LLM_MODEL: str = "gpt-4o-mini"
+    LLM_FALLBACK_MODEL: str = "claude-haiku-4-5"
     APP_ENV: Literal["development", "staging", "production"] = "development"
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG"
+
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CACHE_ENABLED: bool = True
+    CACHE_TTL_SECONDS: int = 86400
+
+    API_BASE_URL: str = "http://localhost:8000"
 
     @model_validator(mode="after")
     def validate_api_key_for_provider(self) -> "Settings":

@@ -22,3 +22,19 @@ class EstimationResponse(BaseModel):
     model: str = Field(..., description="LLM model used")
     provider: str = Field(..., description="LLM provider used")
     usage: TokenUsage
+    cache_hit: bool = Field(default=False, description="Whether the response came from cache")
+    latency_ms: float | None = Field(default=None, description="End-to-end latency in milliseconds")
+    fallback_used: bool = Field(
+        default=False, description="Whether a fallback provider was used"
+    )
+
+
+class StreamMeta(BaseModel):
+    """Metadata sent as final SSE event after streaming completes."""
+
+    model: str
+    provider: str
+    usage: TokenUsage
+    cache_hit: bool = False
+    latency_ms: float | None = None
+    fallback_used: bool = False
