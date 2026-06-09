@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from app.schemas.estimation import EstimationRequest, EstimationResponse, StreamMeta, TokenUsage
+from app.services.llm_cache import LLMCache
 from app.services.llm_service import LLMServiceError, generate_estimation, stream_estimation
 
 log = structlog.get_logger()
@@ -22,6 +23,18 @@ async def create_estimation(request: EstimationRequest) -> EstimationResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
     return EstimationResponse(**result)
+
+
+@router.delete("/cache")
+async def clear_llm_cache() -> dict[str, int]:
+    """Remove all cached LLM responses from Redis."""
+    try:
+        deleted = LLMCache().clear_all()
+    except Exception as exc:
+        log.error("cache_clear_endpoint_error", error=str(exc))
+        raise HTTPException(status_code=500, detail="No se pudo vaciar la caché") from exc
+
+    return {"cleared": deleted}
 
 
 @router.post("/estimate/stream", response_class=EventSourceResponse)

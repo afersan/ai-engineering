@@ -62,6 +62,24 @@ class LLMCache:
         log.info("cache_hit", cache_key=key[:16])
         return result
 
+    def clear_all(self) -> int:
+        """Delete all cached LLM responses. Returns the number of keys removed."""
+        if not self.enabled:
+            return 0
+
+        deleted = 0
+        try:
+            client = self._get_client()
+            for key in client.scan_iter(match="llm:*", count=100):
+                client.delete(key)
+                deleted += 1
+        except redis.RedisError as exc:
+            log.warning("cache_clear_failed", error=str(exc))
+            raise
+
+        log.info("cache_cleared", keys_deleted=deleted)
+        return deleted
+
     def set(self, prompt: str, model: str, system_prompt: str, value: dict[str, Any]) -> None:
         """Store response in Redis with configured TTL."""
         if not self.enabled:

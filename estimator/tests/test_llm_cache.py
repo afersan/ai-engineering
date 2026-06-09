@@ -12,6 +12,7 @@ from app.services.llm_cache import LLMCache
 @pytest.fixture
 def cache_settings() -> Settings:
     return Settings(
+        _env_file=None,
         OPENAI_API_KEY="test-key",
         CACHE_ENABLED=True,
         CACHE_TTL_SECONDS=3600,
@@ -74,6 +75,18 @@ def test_cache_set_calls_setex(cache_settings: Settings) -> None:
     mock_redis.setex.assert_called_once()
     args = mock_redis.setex.call_args[0]
     assert args[1] == 3600
+
+
+def test_cache_clear_all_deletes_matching_keys(cache_settings: Settings) -> None:
+    cache = LLMCache(cache_settings)
+    mock_redis = MagicMock()
+    mock_redis.scan_iter.return_value = ["llm:abc", "llm:def"]
+    cache._client = mock_redis
+
+    deleted = cache.clear_all()
+
+    assert deleted == 2
+    assert mock_redis.delete.call_count == 2
 
 
 def test_cache_disabled_returns_none(cache_settings: Settings) -> None:

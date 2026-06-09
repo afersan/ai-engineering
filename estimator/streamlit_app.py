@@ -16,7 +16,9 @@ from app.services.llm_service import build_system_prompt
 load_dotenv()
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-STREAM_ENDPOINT = f"{API_BASE_URL.rstrip('/')}/api/v1/estimate/stream"
+API_ROOT = API_BASE_URL.rstrip("/")
+STREAM_ENDPOINT = f"{API_ROOT}/api/v1/estimate/stream"
+CACHE_ENDPOINT = f"{API_ROOT}/api/v1/cache"
 
 st.set_page_config(
     page_title="Estimador de Software",
@@ -63,6 +65,22 @@ def _stream_from_api(transcription: str) -> Iterator[str]:
                     event_type = "message"
 
 
+def _clear_chat() -> None:
+    """Reset conversation state and flush server-side LLM cache."""
+    st.session_state.messages = []
+    st.session_state.last_meta = None
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.delete(CACHE_ENDPOINT)
+            response.raise_for_status()
+    except httpx.HTTPError:
+        st.session_state.cache_clear_failed = True
+        return
+
+    st.session_state.cache_clear_failed = False
+
+
 def _render_sidebar() -> None:
     with st.sidebar:
         st.header("Contexto CAG")
@@ -96,6 +114,14 @@ def _render_sidebar() -> None:
             )
         else:
             st.info("Envía una transcripción para ver métricas.")
+
+        st.divider()
+        if st.button("Limpiar chat", type="secondary", use_container_width=True):
+            _clear_chat()
+            st.rerun()
+
+        if st.session_state.get("cache_clear_failed"):
+            st.warning("Historial borrado, pero no se pudo vaciar la caché del servidor.")
 
 
 def main() -> None:
