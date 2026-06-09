@@ -127,6 +127,7 @@ def main() -> None:
                 return
 
         st.session_state.messages.append({"role": "assistant", "content": response_text})
+        st.rerun()
 
 
 if __name__ == "__main__":

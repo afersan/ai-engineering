@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import structlog
-from litellm import Router, completion_cost
+from litellm import Router, completion_cost, token_counter
 
 from app.config import Settings, get_settings
 from app.services.llm_cache import LLMCache
@@ -104,6 +104,44 @@ class LLMWrapper:
             return "anthropic"
         return "openai"
 
+    def _usage_from_response(self, usage: Any) -> dict[str, int]:
+        if usage is None:
+            return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        output_tokens = getattr(usage, "completion_tokens", 0) or 0
+        total_tokens = getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens)
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
+
+    def _estimate_usage(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        output_text: str,
+    ) -> dict[str, int]:
+        input_tokens = token_counter(model=model, messages=messages)
+        output_tokens = token_counter(model=model, text=output_text)
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
+
+    def _ensure_usage(
+        self,
+        usage: dict[str, int],
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        output_text: str,
+    ) -> dict[str, int]:
+        if usage.get("total_tokens", 0) > 0:
+            return usage
+        return self._estimate_usage(model, messages, output_text)
+
     def _normalize_response(
         self,
         response: Any,
@@ -149,20 +187,25 @@ class LLMWrapper:
         call_log = log.bind(model=requested_model, logical_model=LOGICAL_MODEL)
         call_log.info("llm_call_started", cache_lookup=self._cache.enabled)
 
+        start = time.perf_counter()
         cached = self._cache.get(user_message, cache_key_model, system_prompt)
         if cached is not None:
-            cached.setdefault("latency_ms", 0.0)
-            cached.setdefault("fallback_used", False)
+            latency_ms = (time.perf_counter() - start) * 1000
+            result = {
+                **cached,
+                "cache_hit": True,
+                "latency_ms": round(latency_ms, 1),
+                "fallback_used": cached.get("fallback_used", False),
+            }
             call_log.info(
                 "llm_call_completed",
                 cache_hit=True,
-                latency_ms=cached.get("latency_ms", 0.0),
-                tokens_in=cached.get("usage", {}).get("input_tokens"),
-                tokens_out=cached.get("usage", {}).get("output_tokens"),
+                latency_ms=result["latency_ms"],
+                tokens_in=result.get("usage", {}).get("input_tokens"),
+                tokens_out=result.get("usage", {}).get("output_tokens"),
             )
-            return cached
+            return result
 
-        start = time.perf_counter()
         try:
             response = self._router.completion(
                 model=LOGICAL_MODEL,
@@ -214,24 +257,37 @@ class LLMWrapper:
         requested_model = self._settings.LLM_MODEL
         cache_key_model = f"{LOGICAL_MODEL}:{requested_model}"
 
+        messages = self._messages(system_prompt, user_message)
+        start = time.perf_counter()
         cached = self._cache.get(user_message, cache_key_model, system_prompt)
         if cached is not None:
             text = cached.get("estimation", "")
+            usage = self._ensure_usage(
+                cached.get("usage", {}),
+                model=requested_model,
+                messages=messages,
+                output_text=text,
+            )
+            meta_holder: dict[str, Any] = {}
 
             def cached_iter() -> Iterator[str]:
                 if text:
                     yield text
+                latency_ms = (time.perf_counter() - start) * 1000
+                meta_holder.update(
+                    {
+                        **cached,
+                        "usage": usage,
+                        "cache_hit": True,
+                        "latency_ms": round(latency_ms, 1),
+                        "fallback_used": cached.get("fallback_used", False),
+                    }
+                )
 
-            meta = {
-                **cached,
-                "cache_hit": True,
-                "latency_ms": cached.get("latency_ms", 0.0),
-            }
-            return cached_iter(), meta
+            return cached_iter(), meta_holder
 
-        start = time.perf_counter()
         collected: list[str] = []
-        meta_holder: dict[str, Any] = {}
+        meta_holder = {}
 
         call_log = log.bind(model=requested_model, logical_model=LOGICAL_MODEL)
         call_log.info("llm_call_started", cache_lookup=False, streaming=True)
@@ -239,9 +295,10 @@ class LLMWrapper:
         try:
             response = self._router.completion(
                 model=LOGICAL_MODEL,
-                messages=self._messages(system_prompt, user_message),
+                messages=messages,
                 max_tokens=MAX_TOKENS,
                 stream=True,
+                stream_options={"include_usage": True},
             )
         except Exception as exc:
             latency_ms = (time.perf_counter() - start) * 1000
@@ -256,7 +313,16 @@ class LLMWrapper:
 
         def stream_iter() -> Iterator[str]:
             nonlocal collected
+            usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            model_used = requested_model
+
             for chunk in response:
+                chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage is not None:
+                    usage = self._usage_from_response(chunk_usage)
+                if getattr(chunk, "model", None):
+                    model_used = chunk.model
+
                 delta = chunk.choices[0].delta
                 content = getattr(delta, "content", None) or ""
                 if content:
@@ -265,19 +331,21 @@ class LLMWrapper:
 
             latency_ms = (time.perf_counter() - start) * 1000
             full_text = "".join(collected)
+            usage = self._ensure_usage(
+                usage,
+                model=model_used,
+                messages=messages,
+                output_text=full_text,
+            )
             meta_holder.update(
                 {
                     "estimation": full_text,
-                    "model": requested_model,
-                    "provider": self._resolve_provider(requested_model),
-                    "usage": {
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "total_tokens": 0,
-                    },
+                    "model": model_used,
+                    "provider": self._resolve_provider(model_used),
+                    "usage": usage,
                     "cache_hit": False,
                     "latency_ms": round(latency_ms, 1),
-                    "fallback_used": False,
+                    "fallback_used": model_used != requested_model,
                 }
             )
 
@@ -285,6 +353,8 @@ class LLMWrapper:
                 "llm_call_completed",
                 cache_hit=False,
                 latency_ms=meta_holder["latency_ms"],
+                tokens_in=usage["input_tokens"],
+                tokens_out=usage["output_tokens"],
                 streaming=True,
             )
 
