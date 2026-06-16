@@ -1,16 +1,14 @@
-"""Streamlit chat UI for the estimator.
+"""Streamlit product UI for the estimator.
 
 Streamlit acts as an HTTP client of the FastAPI service: it POSTs to
-``/api/v1/estimate/stream`` and renders the SSE chunks live with
-``st.write_stream``. The endpoint URL is read from ``ESTIMATOR_API_BASE_URL``
-(loaded from the same ``.env`` as the API), so the same UI works against a
-local uvicorn or against docker-compose.
+``/api/v1/estimate`` with a typed ``EstimationRequest`` JSON body.
+The endpoint URL is read from ``ESTIMATOR_API_BASE_URL`` (loaded from
+the same ``.env`` as the API).
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
 
 import httpx
 import streamlit as st
@@ -19,93 +17,70 @@ from dotenv import load_dotenv
 load_dotenv()
 
 API_BASE_URL = os.getenv("ESTIMATOR_API_BASE_URL", "http://localhost:8000")
-STREAM_ENDPOINT = f"{API_BASE_URL.rstrip('/')}/api/v1/estimate/stream"
+ESTIMATE_ENDPOINT = f"{API_BASE_URL.rstrip('/')}/api/v1/estimate"
+
+PROJECT_TYPE_OPTIONS = {
+    "Mobile app": "mobile_app",
+    "Web SaaS": "web_saas",
+    "Internal tool": "internal_tool",
+    "Data pipeline": "data_pipeline",
+}
+
+DETAIL_LEVEL_OPTIONS = {
+    "Summary": "summary",
+    "Medium": "medium",
+    "Detailed": "detailed",
+}
+
+OUTPUT_FORMAT_OPTIONS = {
+    "Phases table": "phases_table",
+    "Line items": "line_items",
+    "Narrative": "narrative",
+}
 
 st.set_page_config(page_title="Software Estimator", page_icon="📊")
 st.title("Software Estimator")
 st.caption(
-    "Paste a meeting transcription. The answer streams token by token from the "
-    "FastAPI service over Server-Sent Events."
+    "Describe your project with structured parameters. The FastAPI service "
+    "renders a versioned Jinja2 prompt and returns the estimation."
 )
 
+with st.form("estimation_form"):
+    description = st.text_area(
+        "Project description",
+        placeholder="Describe scope, integrations, deadlines, and constraints…",
+        height=200,
+    )
+    project_type_label = st.selectbox("Project type", list(PROJECT_TYPE_OPTIONS.keys()))
+    detail_level_label = st.selectbox("Detail level", list(DETAIL_LEVEL_OPTIONS.keys()))
+    output_format_label = st.selectbox("Output format", list(OUTPUT_FORMAT_OPTIONS.keys()))
+    submitted = st.form_submit_button("Estimate", type="primary")
 
-def stream_estimation(transcription: str) -> Iterator[str]:
-    """POST to the SSE endpoint and yield text chunks as they arrive.
-
-    Per the SSE spec, a single message with internal newlines is serialised as
-    multiple ``data:`` lines, and the client must join them with ``\\n`` to
-    reconstruct the original payload. A blank line terminates the message.
-    """
-    payload = {"transcription": transcription}
-    with httpx.stream(
-        "POST",
-        STREAM_ENDPOINT,
-        json=payload,
-        timeout=httpx.Timeout(120.0, connect=10.0),
-        headers={"Accept": "text/event-stream"},
-    ) as response:
-        response.raise_for_status()
-        current_event = "token"
-        data_lines: list[str] = []
-        for raw_line in response.iter_lines():
-            if raw_line == "":
-                if data_lines:
-                    payload_text = "\n".join(data_lines)
-                    data_lines = []
-                    if current_event == "token":
-                        yield payload_text
-                    elif current_event == "error":
-                        yield f"\n\n[error] {payload_text}"
-                    elif current_event == "done":
-                        return
-                current_event = "token"
-                continue
-            if raw_line.startswith("event:"):
-                current_event = raw_line[6:].strip()
-            elif raw_line.startswith("data:"):
-                # The SSE spec defines exactly one space after `data:` as
-                # framing, not payload — preserve any further whitespace.
-                data_lines.append(
-                    raw_line[6:] if raw_line.startswith("data: ") else raw_line[5:]
+if submitted:
+    if len(description.strip()) < 20:
+        st.error("Description must be at least 20 characters.")
+    else:
+        payload = {
+            "description": description.strip(),
+            "project_type": PROJECT_TYPE_OPTIONS[project_type_label],
+            "detail_level": DETAIL_LEVEL_OPTIONS[detail_level_label],
+            "output_format": OUTPUT_FORMAT_OPTIONS[output_format_label],
+        }
+        with st.spinner("Generating estimation…"):
+            try:
+                response = httpx.post(
+                    ESTIMATE_ENDPOINT,
+                    json=payload,
+                    timeout=httpx.Timeout(120.0, connect=10.0),
                 )
-
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-if prompt := st.chat_input("Paste your meeting transcription here..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        full_response = ""
-        try:
-            for chunk in stream_estimation(prompt):
-                full_response += chunk
-                placeholder.markdown(full_response + "▍")
-            placeholder.markdown(full_response)
-        except httpx.HTTPError as exc:
-            full_response = f"Could not reach the estimator at `{STREAM_ENDPOINT}`: {exc}"
-            placeholder.error(full_response)
-        response = full_response
-
-    st.session_state.messages.append({"role": "assistant", "content": response})
-
-
-with st.sidebar:
-    st.header("Service")
-    st.code(STREAM_ENDPOINT, language="text")
-    primary = os.getenv("PRIMARY_MODEL", "gpt-4o-mini")
-    fallback = os.getenv("FALLBACK_MODEL", "claude-haiku-4-5-20251001")
-    st.markdown(f"**Primary model:** `{primary}`")
-    st.markdown(f"**Fallback model:** `{fallback}`")
-    st.markdown(f"**Cache TTL:** `{os.getenv('CACHE_TTL', '86400')}s`")
-    if st.button("Clear chat history"):
-        st.session_state.messages = []
-        st.rerun()
+            except httpx.HTTPError as exc:
+                st.error(f"Could not reach the API: {exc}")
+            else:
+                if response.status_code == 422:
+                    st.error(f"Validation error: {response.json()}")
+                elif response.status_code >= 400:
+                    st.error(f"API error ({response.status_code}): {response.text}")
+                else:
+                    body = response.json()
+                    st.markdown(body["text"])
+                    st.caption(f"Prompt version: {body['prompt_version']}")
