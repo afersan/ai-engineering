@@ -25,4 +25,4 @@ venv/
 .vscode/
 
 # Session guides / docs
-docs/
+doc/
