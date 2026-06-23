@@ -1,8 +1,11 @@
 """Session management endpoints."""
-from fastapi import APIRouter
+import structlog
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.models.session import SessionStore
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1", tags=["sessions"])
 
@@ -17,7 +20,12 @@ class SessionCreateResponse(BaseModel):
 @router.post("/sessions", response_model=SessionCreateResponse)
 async def create_session() -> SessionCreateResponse:
     """Create a new conversational session."""
-    session_id = _session_store.create_session()
+    try:
+        session_id = _session_store.create_session()
+    except Exception as exc:
+        log.error("session_endpoint_error", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
     return SessionCreateResponse(session_id=session_id)
 
 

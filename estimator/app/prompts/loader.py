@@ -1,8 +1,12 @@
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from app.schemas.estimation import EstimationRequest
+
+if TYPE_CHECKING:
+    from app.models.session import ProjectMetadata
 
 PROMPTS_DIR = Path(__file__).parent
 
@@ -18,7 +22,7 @@ _env = Environment(
 def render_estimation_prompt(
     request: EstimationRequest,
     version: str = "v1",
-    project_metadata=None,
+    project_metadata: "ProjectMetadata | None" = None,
 ) -> tuple[str, str]:
     """Render system and user prompts for the given estimation request.
 
@@ -27,7 +31,6 @@ def render_estimation_prompt(
         version: Prompt template version (default "v1")
         project_metadata: Optional project context from session
     """
-    from app.models.session import ProjectMetadata  # Import here to avoid circular dependency
 
     system_template = _env.get_template(f"estimation/{version}/system.j2")
     user_template = _env.get_template(f"estimation/{version}/user.j2")
