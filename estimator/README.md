@@ -115,6 +115,45 @@ Cambios principales respecto a la sesion 03:
 - **Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
+## Session 05: Conversational Memory (Current)
+
+The estimator now supports multi-turn conversations with session state management.
+
+### New Features
+
+- **Session management:** `POST /sessions` creates a session, `/sessions/{id}/estimate` maintains context
+- **Conversational memory:** Sliding window (6 turns) preserves recent context
+- **Project metadata:** Extracted facts (name, team size, technologies, scope) injected into system prompts
+- **File attachments:** Upload PDFs and Word documents to enrich estimations
+- **Updated Streamlit client:** Session persistence, file uploads, metadata display
+
+### Running the Service
+
+```bash
+cd estimator
+
+# Start API
+uv run uvicorn app.main:app --reload
+
+# Start Streamlit client (separate terminal)
+uv run streamlit run streamlit_app.py
+```
+
+### API Endpoints
+
+- `POST /api/v1/sessions` → Create new session
+- `POST /api/v1/sessions/{session_id}/estimate` → Multi-turn estimation with attachments
+
+### Architecture
+
+See `docs/session-05-implementation.md` for detailed architecture decisions.
+
+**Key choices:**
+- Local file text extraction (not multimodal API)
+- LLM-based metadata extraction (not regex)
+- In-memory session storage (volatile, no persistence)
+- Sliding window history (6 turns max)
+
 ---
 
 > Este proyecto forma parte del **Master en AI Engineering** y servira como base para evolucionar hacia salida estructurada, guardrails y cache semantico en el directo de la sesion 04.
