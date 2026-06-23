@@ -17,6 +17,8 @@ import httpx
 import streamlit as st
 from dotenv import load_dotenv
 
+from app.schemas.estimation import MAX_DESCRIPTION_LENGTH, MAX_TRANSCRIPT_LENGTH
+
 load_dotenv()
 
 API_BASE_URL = os.getenv("ESTIMATOR_API_BASE_URL", "http://localhost:8000")
@@ -40,6 +42,37 @@ OUTPUT_FORMAT_OPTIONS = {
     "Line items": "line_items",
     "Narrative": "narrative",
 }
+
+
+def format_validation_error(response: httpx.Response) -> str:
+    """Convierte errores 422 de FastAPI en mensajes legibles."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text
+
+    detail = payload.get("detail")
+    if isinstance(detail, str):
+        return detail
+
+    if isinstance(detail, list):
+        messages = []
+        for item in detail:
+            field = ".".join(str(part) for part in item.get("loc", []) if part != "body")
+            msg = item.get("msg", "Error de validación")
+            if field == "transcript" and "at most" in msg:
+                messages.append(
+                    f"La transcripción supera el límite de {MAX_TRANSCRIPT_LENGTH:,} caracteres "
+                    f"(actual: {len(item.get('input', '')):,}). "
+                    "Acorta el texto o mueve detalle a un adjunto PDF/Word."
+                )
+            elif field:
+                messages.append(f"{field}: {msg}")
+            else:
+                messages.append(msg)
+        return " ".join(messages)
+
+    return str(payload)
 
 st.set_page_config(page_title="Software Estimator (Session 05)", page_icon="💬", layout="wide")
 
@@ -96,6 +129,7 @@ with st.form("estimation_form"):
         "Describe your request",
         placeholder="Add a login feature with OAuth...",
         height=150,
+        help=f"Máximo {MAX_TRANSCRIPT_LENGTH:,} caracteres. Para textos largos, adjunta un PDF o Word.",
     )
 
     col1, col2, col3 = st.columns(3)
@@ -115,14 +149,21 @@ with st.form("estimation_form"):
     submitted = st.form_submit_button("📤 Send", type="primary")
 
 if submitted:
-    if len(transcript.strip()) < 20:
-        st.error("Request must be at least 20 characters.")
+    cleaned_transcript = transcript.strip()
+    if len(cleaned_transcript) < 20:
+        st.error("La petición debe tener al menos 20 caracteres.")
+    elif len(cleaned_transcript) > MAX_TRANSCRIPT_LENGTH:
+        st.error(
+            f"La transcripción tiene {len(cleaned_transcript):,} caracteres. "
+            f"El máximo permitido es {MAX_TRANSCRIPT_LENGTH:,}. "
+            "Acorta el texto o adjunta un documento con el detalle."
+        )
     else:
         estimate_url = f"{SESSIONS_ENDPOINT}/{st.session_state.session_id}/estimate"
 
         # Prepare form data
         form_data = {
-            "transcript": transcript.strip(),
+            "transcript": cleaned_transcript,
             "project_type": PROJECT_TYPE_OPTIONS[project_type_label],
             "detail_level": DETAIL_LEVEL_OPTIONS[detail_level_label],
             "output_format": OUTPUT_FORMAT_OPTIONS[output_format_label],
@@ -150,7 +191,7 @@ if submitted:
                 if response.status_code == 404:
                     st.error("Session expired. Click 'New Conversation' to start fresh.")
                 elif response.status_code == 422:
-                    st.error(f"Validation error: {response.json()}")
+                    st.error(f"Error de validación: {format_validation_error(response)}")
                 elif response.status_code >= 400:
                     st.error(f"API error ({response.status_code}): {response.text}")
                 else:

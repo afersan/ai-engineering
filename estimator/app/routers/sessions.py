@@ -5,7 +5,14 @@ from pydantic import BaseModel
 
 from app.models.session import SessionStore
 from app.schemas.session import MultiTurnEstimationResponse
-from app.schemas.estimation import EstimationRequest, ProjectType, DetailLevel, OutputFormat
+from app.schemas.estimation import (
+    EstimationRequest,
+    MAX_DESCRIPTION_LENGTH,
+    MAX_TRANSCRIPT_LENGTH,
+    ProjectType,
+    DetailLevel,
+    OutputFormat,
+)
 from app.services.attachment_processor import process_attachments, AttachmentProcessingError
 from app.services.metadata_extractor import extract_project_metadata
 from app.prompts.loader import render_estimation_prompt
@@ -41,7 +48,7 @@ async def create_session() -> SessionCreateResponse:
 )
 async def estimate_with_session(
     session_id: str,
-    transcript: str = Form(..., min_length=20, max_length=5000),
+    transcript: str = Form(..., min_length=20, max_length=MAX_TRANSCRIPT_LENGTH),
     project_type: str = Form(...),
     detail_level: str = Form(...),
     output_format: str = Form(...),
@@ -74,6 +81,15 @@ async def estimate_with_session(
     full_transcript = transcript
     if attachment_text:
         full_transcript = f"{transcript}\n\n{attachment_text}"
+
+    if len(full_transcript) > MAX_DESCRIPTION_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"El texto combinado (transcripción + adjuntos) supera el límite "
+                f"de {MAX_DESCRIPTION_LENGTH} caracteres"
+            ),
+        )
 
     # Build typed request (for compatibility with existing prompt renderer)
     request = EstimationRequest(

@@ -53,6 +53,70 @@ async def test_multiturn_estimation_preserves_context():
 
 
 @pytest.mark.asyncio
+async def test_multiturn_accepts_long_transcription_fixture():
+    """Debe aceptar la transcripción larga de fixtures (≈33k caracteres)."""
+    from app.main import app
+    from pathlib import Path
+
+    transcript = (
+        Path(__file__).parent.parent / "app" / "fixtures" / "long_transcription.txt"
+    ).read_text(encoding="utf-8")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/v1/sessions")
+        session_id = session_resp.json()["session_id"]
+
+        resp = await client.post(
+            f"/api/v1/sessions/{session_id}/estimate",
+            data={
+                "transcript": transcript,
+                "project_type": "web_saas",
+                "detail_level": "summary",
+                "output_format": "phases_table",
+            },
+        )
+
+        assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_multiturn_accepts_long_transcript_with_attachment_text(monkeypatch):
+    """Transcripción + adjunto no deben fallar por el límite de 2000 caracteres."""
+    from app.main import app
+    from app.routers import sessions as sessions_router
+
+    async def fake_process_attachments(_files):
+        return "--- Attachment: spec.pdf ---\n" + ("detalle de arquitectura. " * 400)
+
+    monkeypatch.setattr(
+        sessions_router,
+        "process_attachments",
+        fake_process_attachments,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_resp = await client.post("/api/v1/sessions")
+        session_id = session_resp.json()["session_id"]
+
+        form_data = {
+            "transcript": "Necesito estimar un portal admin B2B SaaS. " * 50,
+            "project_type": "web_saas",
+            "detail_level": "summary",
+            "output_format": "phases_table",
+        }
+        resp = await client.post(
+            f"/api/v1/sessions/{session_id}/estimate",
+            data=form_data,
+        )
+
+        assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
 async def test_multiturn_estimation_with_pdf_attachment():
     """Should process PDF attachments and include text in estimation."""
     from app.main import app
