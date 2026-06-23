@@ -121,8 +121,8 @@ async def estimate_with_session(
     updated_system_prompt, _ = render_estimation_prompt(request, project_metadata=session.metadata)
     session.history.update_system_prompt(updated_system_prompt)
 
-    # Calculate turn number (count user messages in history)
-    turn_number = len([m for m in messages if m["role"] == "user"])
+    # Get absolute turn number from history
+    turn_number = session.history.get_turn_count()
 
     return MultiTurnEstimationResponse(
         estimation=estimation_text,

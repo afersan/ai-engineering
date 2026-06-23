@@ -37,6 +37,8 @@ class ConversationHistory:
         self._system_prompt: str | None = None
         # Deque of (role, content) tuples - excludes system prompt
         self._messages: deque[tuple[str, str]] = deque(maxlen=max_turns * 2)
+        # Track absolute turn count (increments even when messages are discarded)
+        self._turn_count: int = 0
 
     def add_message(self, role: Literal["system", "user", "assistant"], content: str) -> None:
         """Add a message to history. System prompt is stored separately."""
@@ -44,6 +46,9 @@ class ConversationHistory:
             self._system_prompt = content
         else:
             self._messages.append((role, content))
+            # Increment turn count on each user message
+            if role == "user":
+                self._turn_count += 1
 
     def to_messages_list(self) -> list[dict[str, str]]:
         """Return messages array ready for LLM API."""
@@ -56,6 +61,10 @@ class ConversationHistory:
     def update_system_prompt(self, content: str) -> None:
         """Update system prompt (used when project_metadata changes)."""
         self._system_prompt = content
+
+    def get_turn_count(self) -> int:
+        """Return the absolute turn count (number of user messages sent)."""
+        return self._turn_count
 
 
 @dataclass
