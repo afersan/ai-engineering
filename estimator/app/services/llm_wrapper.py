@@ -178,6 +178,61 @@ class LLMWrapper:
         self.cache.set(cache_key, result)
         return {**result, "cache_hit": False}
 
+    def complete_with_history(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model_override: str | None = None,
+        max_tokens: int = 4000,
+        thinking_budget: int | None = None,
+    ) -> dict[str, Any]:
+        """LLM call with full conversation history (multi-turn).
+
+        Unlike complete(), this method accepts a pre-built messages list including
+        system prompt and conversation history. No caching is applied since message
+        history makes cache keys impractical.
+        """
+        kwargs = self._build_call_kwargs(
+            messages=messages,
+            max_tokens=max_tokens,
+            thinking_budget=thinking_budget,
+            model_override=model_override,
+        )
+
+        log.info(
+            "llm_call_started",
+            mode="multi_turn",
+            model=model_override or self.primary_model,
+            num_messages=len(messages),
+            has_thinking=thinking_budget is not None,
+        )
+        t0 = time.perf_counter()
+        try:
+            response = self._dispatch(model_override=model_override, **kwargs)
+        except Exception as exc:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            log.error(
+                "llm_call_failed",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                latency_ms=latency_ms,
+            )
+            raise
+
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        result = self._normalise_response(response, latency_ms=latency_ms)
+        log.info(
+            "llm_call_completed",
+            model=result["model"],
+            provider=result["provider"],
+            input_tokens=result["usage"]["input_tokens"],
+            output_tokens=result["usage"]["output_tokens"],
+            cost_usd=result["cost_usd"],
+            latency_ms=latency_ms,
+            finish_reason=result["finish_reason"],
+        )
+        return {**result, "cache_hit": False}
+
     def complete_stream(
         self,
         *,
