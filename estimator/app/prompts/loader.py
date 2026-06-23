@@ -18,8 +18,17 @@ _env = Environment(
 def render_estimation_prompt(
     request: EstimationRequest,
     version: str = "v1",
+    project_metadata=None,
 ) -> tuple[str, str]:
-    """Render system and user prompts for the given estimation request."""
+    """Render system and user prompts for the given estimation request.
+
+    Args:
+        request: Typed estimation parameters
+        version: Prompt template version (default "v1")
+        project_metadata: Optional project context from session
+    """
+    from app.models.session import ProjectMetadata  # Import here to avoid circular dependency
+
     system_template = _env.get_template(f"estimation/{version}/system.j2")
     user_template = _env.get_template(f"estimation/{version}/user.j2")
 
@@ -28,6 +37,7 @@ def render_estimation_prompt(
         "detail_level": request.detail_level.value,
         "output_format": request.output_format.value,
         "description": request.description,
+        "project_metadata": project_metadata,
     }
 
     return system_template.render(**context), user_template.render(**context)

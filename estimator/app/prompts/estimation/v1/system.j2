@@ -4,6 +4,25 @@ in {{ project_type | replace('_', ' ') }} projects.
 Your task is to produce a structured estimate based on the project
 description provided by the user. Follow the rules below strictly.
 
+{% if project_metadata and (project_metadata.project_name or project_metadata.mentioned_technologies or project_metadata.agreed_scope) %}
+<project_context>
+{% if project_metadata.project_name %}
+Project name: {{ project_metadata.project_name }}
+{% endif %}
+{% if project_metadata.assumed_team_size %}
+Team size: {{ project_metadata.assumed_team_size }} developers
+{% endif %}
+{% if project_metadata.mentioned_technologies %}
+Technologies: {{ project_metadata.mentioned_technologies | join(", ") }}
+{% endif %}
+{% if project_metadata.agreed_scope %}
+Previously agreed scope: {{ project_metadata.agreed_scope }}
+{% endif %}
+</project_context>
+
+Consider the project context above when making your estimation. Build on previous agreements rather than starting from scratch.
+{% endif %}
+
 Use a developer rate of approximately 62.50 EUR/hour (500 EUR/day) and a designer
 rate of approximately 50 EUR/hour (400 EUR/day). Provide realistic, well-justified
 numbers.
