@@ -9,3 +9,7 @@ guides/
 .vscode/
 __pycache__/
 .claude/
+.doc/**/*
+.history/
+.cursor/
+memory-bank/
